@@ -8,8 +8,16 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     exit();
 }
 
+// Include database connection
+include('db_config.php');
+
+// Get user ID from session (set this during login)
+$user_id = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : null;
+
 // Handle logout
 if (isset($_GET['logout'])) {
+    // Clear all session variables
+    session_unset();
     // Destroy the session
     session_destroy();
     // Redirect to login page
@@ -20,121 +28,93 @@ if (isset($_GET['logout'])) {
 // Handle profile image upload
 $profileImagePath = 'uploads/default-profile.png'; // Default profile image
 
+// Load user's profile image from database
+if ($user_id) {
+    try {
+        $sql = "SELECT image_path FROM profile_images WHERE user_id = ? ORDER BY upload_date DESC LIMIT 1";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($result && file_exists($result['image_path'])) {
+            $profileImagePath = $result['image_path'];
+        }
+    } catch (Exception $e) {
+        error_log("Error loading profile image: " . $e->getMessage());
+    }
+}
+
+// Handle profile image upload
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['profileImage'])) {
-    $file = $_FILES['profileImage'];
-    $fileName = $file['name'];
-    $fileTmp = $file['tmp_name'];
-    $fileError = $file['error'];
-    $fileSize = $file['size'];
-
-    // Validate file
-    $allowed = ['jpg', 'jpeg', 'png', 'gif'];
-    $fileName_ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-
-    if (!in_array($fileName_ext, $allowed)) {
-        $uploadError = "Invalid file type. Only JPG, JPEG, PNG, and GIF are allowed.";
-    } elseif ($fileSize > 5000000) { // 5MB max
-        $uploadError = "File size is too large. Maximum 5MB allowed.";
-    } elseif ($fileError !== 0) {
-        $uploadError = "Error uploading file. Please try again.";
+    if (!$user_id) {
+        $uploadError = "User ID not found. Please log in again.";
     } else {
-        // Create uploads directory if it doesn't exist
-        if (!is_dir('uploads')) {
-            mkdir('uploads', 0755, true);
-        }
+        $file = $_FILES['profileImage'];
+        $fileName = $file['name'];
+        $fileTmp = $file['tmp_name'];
+        $fileError = $file['error'];
+        $fileSize = $file['size'];
 
-        // Generate unique filename
-        $newFileName = 'profile_' . time() . '.' . $fileName_ext;
-        $uploadPath = 'uploads/' . $newFileName;
-
-        // Delete old profile image if it exists
-        if (isset($_SESSION['profileImage']) && $_SESSION['profileImage'] !== 'uploads/default-profile.png') {
-            if (file_exists($_SESSION['profileImage'])) {
-                unlink($_SESSION['profileImage']);
-            }
-        }
-
-        // Move uploaded file
-        if (move_uploaded_file($fileTmp, $uploadPath)) {
-            $_SESSION['profileImage'] = $uploadPath;
-            $profileImagePath = $uploadPath;
-            $uploadSuccess = "Profile picture updated successfully!";
-        } else {
-            $uploadError = "Failed to upload file. Please try again.";
-        }
-    }
-}
-
-// Check if profile image exists in session
-if (isset($_SESSION['profileImage'])) {
-    $profileImagePath = $_SESSION['profileImage'];
-}
-
-// Handle document file upload
-$uploadedDocuments = [];
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['documents'])) {
-    $files = $_FILES['documents'];
-    $allowed = ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx'];
-    
-    // Create documents directory if it doesn't exist
-    if (!is_dir('uploads/documents')) {
-        mkdir('uploads/documents', 0755, true);
-    }
-
-    for ($i = 0; $i < count($files['name']); $i++) {
-        $fileName = $files['name'][$i];
-        $fileTmp = $files['tmp_name'][$i];
-        $fileError = $files['error'][$i];
-        $fileSize = $files['size'][$i];
-
+        // Validate file
+        $allowed = ['jpg', 'jpeg', 'png', 'gif'];
         $fileName_ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
 
         if (!in_array($fileName_ext, $allowed)) {
-            continue;
-        } elseif ($fileSize > 10000000) { // 10MB max
-            continue;
+            $uploadError = "Invalid file type. Only JPG, JPEG, PNG, and GIF are allowed.";
+        } elseif ($fileSize > 5000000) { // 5MB max
+            $uploadError = "File size is too large. Maximum 5MB allowed.";
         } elseif ($fileError !== 0) {
-            continue;
+            $uploadError = "Error uploading file. Please try again.";
+        } else {
+            // Create uploads directory if it doesn't exist
+            if (!is_dir('uploads')) {
+                mkdir('uploads', 0755, true);
+            }
+
+            // Generate unique filename with user_id
+            $newFileName = 'profile_' . $user_id . '_' . time() . '.' . $fileName_ext;
+            $uploadPath = 'uploads/' . $newFileName;
+
+            // Delete old profile images for this user
+            try {
+                $sqlOld = "SELECT image_path FROM profile_images WHERE user_id = ?";
+                $stmtOld = $pdo->prepare($sqlOld);
+                $stmtOld->execute([$user_id]);
+                $oldFiles = $stmtOld->fetchAll(PDO::FETCH_ASSOC);
+                
+                foreach ($oldFiles as $oldFile) {
+                    if (file_exists($oldFile['image_path'])) {
+                        unlink($oldFile['image_path']);
+                    }
+                }
+                
+                // Delete old database records
+                $sqlDelete = "DELETE FROM profile_images WHERE user_id = ?";
+                $stmtDelete = $pdo->prepare($sqlDelete);
+                $stmtDelete->execute([$user_id]);
+            } catch (Exception $e) {
+                error_log("Error deleting old profile images: " . $e->getMessage());
+            }
+
+            // Move uploaded file
+            if (move_uploaded_file($fileTmp, $uploadPath)) {
+                // Insert into database
+                try {
+                    $uploadDate = date('Y-m-d H:i:s');
+                    $sqlInsert = "INSERT INTO profile_images (user_id, image_path, upload_date) VALUES (?, ?, ?)";
+                    $stmtInsert = $pdo->prepare($sqlInsert);
+                    $stmtInsert->execute([$user_id, $uploadPath, $uploadDate]);
+                    
+                    $profileImagePath = $uploadPath;
+                    $uploadSuccess = "Profile picture updated successfully!";
+                } catch (Exception $e) {
+                    unlink($uploadPath); // Delete the file if DB insert fails
+                    $uploadError = "Database error: " . $e->getMessage();
+                }
+            } else {
+                $uploadError = "Failed to upload file. Please try again.";
+            }
         }
-
-        $newFileName = 'doc_' . time() . '_' . $i . '.' . $fileName_ext;
-        $uploadPath = 'uploads/documents/' . $newFileName;
-
-        if (move_uploaded_file($fileTmp, $uploadPath)) {
-            $uploadedDocuments[] = [
-                'name' => $fileName,
-                'path' => $uploadPath,
-                'size' => $fileSize,
-                'time' => date('Y-m-d H:i:s')
-            ];
-        }
-    }
-
-    if (!empty($uploadedDocuments)) {
-        $_SESSION['uploadedDocuments'] = $uploadedDocuments;
-        $docUploadSuccess = "Documents uploaded successfully!";
-    }
-}
-
-// Get uploaded documents from session
-if (isset($_SESSION['uploadedDocuments'])) {
-    $uploadedDocuments = $_SESSION['uploadedDocuments'];
-} else {
-    $uploadedDocuments = [];
-}
-
-// Handle document deletion
-if (isset($_GET['deleteDoc'])) {
-    $docIndex = $_GET['deleteDoc'];
-    if (isset($_SESSION['uploadedDocuments'][$docIndex])) {
-        $filePath = $_SESSION['uploadedDocuments'][$docIndex]['path'];
-        if (file_exists($filePath)) {
-            unlink($filePath);
-        }
-        unset($_SESSION['uploadedDocuments'][$docIndex]);
-        $_SESSION['uploadedDocuments'] = array_values($_SESSION['uploadedDocuments']);
-        header("Location: dashboard.php?page=upload-files");
-        exit();
     }
 }
 ?>
@@ -248,6 +228,12 @@ if (isset($_GET['deleteDoc'])) {
                 <i class="fas fa-cogs text-lg"></i>
                 <span class="font-medium">Settings</span>
             </a>
+            <a href="roles.php" class="nav-link flex items-center gap-3 text-white hover:bg-green-600 px-4 py-3 rounded-lg hover:pl-6">
+                <i class="fas fa-user-shield text-lg"></i> <!-- Icon for roles -->
+                <span class="font-medium">Roles</span>
+            </a>
+
+            
         </nav>
 
         <div class="mt-auto pt-6 border-t border-green-600">
@@ -270,7 +256,7 @@ if (isset($_GET['deleteDoc'])) {
 
                 <div class="flex items-center gap-6">
                     <div class="text-right">
-                        <p class="font-semibold text-gray-800">Admin User</p>
+                        <p class="font-semibold text-gray-800"><?= isset($_SESSION['username']) ? htmlspecialchars($_SESSION['username']) : 'Admin User' ?></p>
                         <p class="text-sm text-gray-500">Administrator</p>
                     </div>
                     <div class="relative group">
@@ -284,6 +270,20 @@ if (isset($_GET['deleteDoc'])) {
                     </div>
                 </div>
             </div>
+            
+            
+            <!-- Success/Error Messages -->
+            <?php if (isset($uploadSuccess)): ?>
+                <div class="mx-8 mt-2 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg">
+                    <i class="fas fa-check-circle mr-2"></i><?= $uploadSuccess ?>
+                </div>
+            <?php endif; ?>
+            
+            <?php if (isset($uploadError)): ?>
+                <div class="mx-8 mt-2 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                    <i class="fas fa-exclamation-circle mr-2"></i><?= $uploadError ?>
+                </div>
+            <?php endif; ?>
         </header>
 
         <!-- Dashboard Content Sections -->
@@ -402,13 +402,6 @@ if (isset($_GET['deleteDoc'])) {
                                     <div class="text-xs text-gray-500">Monthly usage report exported — 1 day ago</div>
                                 </div>
                             </li>
-                            <li class="flex items-start gap-3">
-                                <div class="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-gray-600"><i class="fas fa-exclamation-triangle"></i></div>
-                                <div>
-                                    <div class="font-medium">Password Attempts</div>
-                                    <div class="text-xs text-gray-500">Multiple failed logins detected — 3 days ago</div>
-                                </div>
-                            </li>
                         </ul>
                     </div>
                 </div>
@@ -480,6 +473,149 @@ if (isset($_GET['deleteDoc'])) {
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Upload Files Page -->
+            <section id="upload-files" class="page fade-in hidden">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-2xl font-semibold text-gray-800">Upload Required Documents</h2>
+                        <p class="text-sm text-gray-500 mt-1">Upload all necessary documents for verification and enrollment</p>
+                    </div>
+                </div>
+
+                <!-- Success/Error Messages -->
+                <div id="uploadMessage" class="mb-4 hidden"></div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Main Upload Area -->
+                    <div class="lg:col-span-2">
+                        <div class="bg-white rounded-lg shadow p-8">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-6">Document Upload</h3>
+                            
+                            <!-- Upload Form -->
+                            <form id="documentUploadForm" enctype="multipart/form-data">
+                                <!-- Upload Dropzone -->
+                                <div id="dropzone" class="border-2 border-dashed border-green-300 rounded-lg p-8 text-center bg-green-50 cursor-pointer hover:border-green-500 transition" ondrop="handleDrop(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" onclick="document.getElementById('fileInput').click()">
+                                    <div class="mb-4">
+                                        <i class="fas fa-cloud-upload-alt text-5xl text-green-600"></i>
+                                    </div>
+                                    <h4 class="text-lg font-semibold text-gray-800 mb-2">Drag and drop your files here</h4>
+                                    <p class="text-sm text-gray-600 mb-4">or click to browse from your computer</p>
+                                    <p class="text-xs text-gray-500">Supported formats: PDF, JPG, PNG, DOC, DOCX (Max 10MB per file)</p>
+                                    <input type="file" id="fileInput" name="documents[]" multiple class="hidden" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" onchange="handleFileSelect(event)">
+                                </div>
+
+                                <!-- Selected Files Preview -->
+                                <div id="selectedFilesPreview" class="mt-6 hidden">
+                                    <h4 class="text-sm font-semibold text-gray-800 mb-3">Files to Upload</h4>
+                                    <div id="previewList" class="space-y-2 mb-4"></div>
+                                </div>
+
+                                <!-- Upload Progress -->
+                                <div id="uploadProgress" class="mt-6 hidden">
+                                    <div class="space-y-3">
+                                        <div class="flex items-center justify-between">
+                                            <span class="text-sm font-medium text-gray-700">Uploading...</span>
+                                            <span id="progressPercent" class="text-sm text-gray-500">0%</span>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-2">
+                                            <div id="progressBar" class="bg-green-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Uploaded Files List -->
+                                <div id="uploadedFilesContainer" class="mt-6 hidden">
+                                    <h4 class="text-sm font-semibold text-gray-800 mb-3">Uploaded Files</h4>
+                                    <div id="uploadedFilesList" class="space-y-2"></div>
+                                </div>
+
+                                <div class="mt-6 flex gap-3">
+                                    <button type="submit" id="submitBtn" class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-500 transition hidden">
+                                        <i class="fas fa-cloud-upload-alt mr-2"></i>Upload Files
+                                    </button>
+                                    <button type="button" id="clearBtn" class="px-6 py-2 border rounded-lg text-gray-700 hover:bg-gray-50 transition" onclick="clearFilePreview()">
+                                        <i class="fas fa-redo mr-2"></i>Clear Selection
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Required Documents Checklist -->
+                    <div>
+                        <div class="bg-white rounded-lg shadow p-6 sticky top-24">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-4">Required Documents</h3>
+                            <div class="space-y-3">
+                                <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
+                                    <div>
+                                        <p class="font-medium text-gray-800 text-sm">Good Moral Form</p>
+                                        <p class="text-xs text-gray-500">From previous school</p>
+                                    </div>
+                                </label>
+
+                                <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
+                                    <div>
+                                        <p class="font-medium text-gray-800 text-sm">Form 137</p>
+                                        <p class="text-xs text-gray-500">School report card</p>
+                                    </div>
+                                </label>
+
+                                <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
+                                    <div>
+                                        <p class="font-medium text-gray-800 text-sm">Birth Certificate</p>
+                                        <p class="text-xs text-gray-500">Official birth certificate</p>
+                                    </div>
+                                </label>
+
+                                <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
+                                    <div>
+                                        <p class="font-medium text-gray-800 text-sm">Certificate of Completion</p>
+                                        <p class="text-xs text-gray-500">From Grade 6</p>
+                                    </div>
+                                </label>
+
+                                <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
+                                    <div>
+                                        <p class="font-medium text-gray-800 text-sm">ESC Certificate G11 & G12</p>
+                                        <p class="text-xs text-gray-500">Educational Service Contract</p>
+                                    </div>
+                                </label>
+
+                                <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
+                                    <div>
+                                        <p class="font-medium text-gray-800 text-sm">Report Card G11 & G12</p>
+                                        <p class="text-xs text-gray-500">Senior high school grades</p>
+                                    </div>
+                                </label>
+
+                                <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
+                                    <div>
+                                        <p class="font-medium text-gray-800 text-sm">2x2 ID Picture</p>
+                                        <p class="text-xs text-gray-500">Recent passport-style photo</p>
+                                    </div>
+                                </label>
+                            </div>
+
+                            <!-- Completion Status -->
+                            <div class="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                                <p class="text-sm text-blue-800 mb-2"><i class="fas fa-info-circle mr-2"></i>Completion Status</p>
+                                <div class="w-full bg-blue-200 rounded-full h-2 mt-2">
+                                    <div id="completionBar" class="bg-green-600 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                                </div>
+                                <p class="text-xs text-blue-600 mt-2 font-semibold"><span id="completionText">0</span> of 7 documents submitted</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -1073,78 +1209,62 @@ if (isset($_GET['deleteDoc'])) {
                     </div>
                 </div>
 
+                <!-- Success/Error Messages -->
+                <div id="uploadMessage" class="mb-4 hidden"></div>
+
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <!-- Main Upload Area -->
                     <div class="lg:col-span-2">
                         <div class="bg-white rounded-lg shadow p-8">
                             <h3 class="text-lg font-semibold text-gray-800 mb-6">Document Upload</h3>
                             
-                            <!-- Upload Dropzone -->
-                            <div class="border-2 border-dashed border-green-300 rounded-lg p-8 text-center bg-green-50 cursor-pointer hover:border-green-500 transition" onclick="document.getElementById('fileInput').click()">
-                                <div class="mb-4">
-                                    <i class="fas fa-cloud-upload-alt text-5xl text-green-600"></i>
+                            <!-- Upload Form -->
+                            <form id="documentUploadForm" enctype="multipart/form-data">
+                                <!-- Upload Dropzone -->
+                                <div id="dropzone" class="border-2 border-dashed border-green-300 rounded-lg p-8 text-center bg-green-50 cursor-pointer hover:border-green-500 transition" ondrop="handleDrop(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" onclick="document.getElementById('fileInput').click()">
+                                    <div class="mb-4">
+                                        <i class="fas fa-cloud-upload-alt text-5xl text-green-600"></i>
+                                    </div>
+                                    <h4 class="text-lg font-semibold text-gray-800 mb-2">Drag and drop your files here</h4>
+                                    <p class="text-sm text-gray-600 mb-4">or click to browse from your computer</p>
+                                    <p class="text-xs text-gray-500">Supported formats: PDF, JPG, PNG, DOC, DOCX (Max 10MB per file)</p>
+                                    <input type="file" id="fileInput" name="documents[]" multiple class="hidden" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" onchange="handleFileSelect(event)">
                                 </div>
-                                <h4 class="text-lg font-semibold text-gray-800 mb-2">Drag and drop your files here</h4>
-                                <p class="text-sm text-gray-600 mb-4">or click to browse from your computer</p>
-                                <p class="text-xs text-gray-500">Supported formats: PDF, JPG, PNG, DOC, DOCX (Max 10MB per file)</p>
-                                <input type="file" id="fileInput" multiple class="hidden" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
-                            </div>
 
-                            <!-- Upload Progress -->
-                            <div id="uploadProgress" class="mt-6 hidden">
-                                <div class="space-y-3">
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-sm font-medium text-gray-700">Uploading...</span>
-                                        <span class="text-sm text-gray-500">65%</span>
-                                    </div>
-                                    <div class="w-full bg-gray-200 rounded-full h-2">
-                                        <div class="bg-green-600 h-2 rounded-full" style="width: 65%"></div>
-                                    </div>
+                                <!-- Selected Files Preview -->
+                                <div id="selectedFilesPreview" class="mt-6 hidden">
+                                    <h4 class="text-sm font-semibold text-gray-800 mb-3">Files to Upload</h4>
+                                    <div id="previewList" class="space-y-2 mb-4"></div>
                                 </div>
-                            </div>
 
-                            <!-- Uploaded Files List -->
-                            <div id="uploadedFiles" class="mt-6">
-                                <h4 class="text-sm font-semibold text-gray-800 mb-3">Uploaded Files</h4>
-                                <div class="space-y-2">
-                                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                        <div class="flex items-center gap-3">
-                                            <i class="fas fa-file-pdf text-red-600 text-lg"></i>
-                                            <div>
-                                                <p class="text-sm font-medium text-gray-800">Good Moral Form.pdf</p>
-                                                <p class="text-xs text-gray-500">2.4 MB • Uploaded 1 hour ago</p>
-                                            </div>
+                                <!-- Upload Progress -->
+                                <div id="uploadProgress" class="mt-6 hidden">
+                                    <div class="space-y-3">
+                                        <div class="flex items-center justify-between">
+                                            <span class="text-sm font-medium text-gray-700">Uploading...</span>
+                                            <span id="progressPercent" class="text-sm text-gray-500">0%</span>
                                         </div>
-                                        <div class="flex items-center gap-2">
-                                            <span class="px-2 py-1 bg-green-100 text-green-800 text-xs font-semibold rounded">✓ Verified</span>
-                                            <button class="text-gray-400 hover:text-red-600"><i class="fas fa-trash"></i></button>
-                                        </div>
-                                    </div>
-
-                                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                        <div class="flex items-center gap-3">
-                                            <i class="fas fa-file-image text-blue-600 text-lg"></i>
-                                            <div>
-                                                <p class="text-sm font-medium text-gray-800">Form 137.jpg</p>
-                                                <p class="text-xs text-gray-500">1.8 MB • Uploaded 2 hours ago</p>
-                                            </div>
-                                        </div>
-                                        <div class="flex items-center gap-2">
-                                            <span class="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-semibold rounded">⧖ Pending</span>
-                                            <button class="text-gray-400 hover:text-red-600"><i class="fas fa-trash"></i></button>
+                                        <div class="w-full bg-gray-200 rounded-full h-2">
+                                            <div id="progressBar" class="bg-green-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
 
-                            <div class="mt-6 flex gap-3">
-                                <button class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-500 transition">
-                                    <i class="fas fa-check mr-2"></i>Submit Files
-                                </button>
-                                <button class="px-6 py-2 border rounded-lg text-gray-700 hover:bg-gray-50 transition">
-                                    <i class="fas fa-redo mr-2"></i>Clear All
-                                </button>
-                            </div>
+                                <!-- Uploaded Files List -->
+                                <div id="uploadedFilesContainer" class="mt-6 hidden">
+                                    <h4 class="text-sm font-semibold text-gray-800 mb-3">Uploaded Files</h4>
+                                    <div id="uploadedFilesList" class="space-y-2"></div>
+                                </div>
+
+                                <div class="mt-6 flex gap-3">
+                                    <button type="submit" id="submitBtn" class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-500 transition hidden">
+                                        <i class="fas fa-cloud-upload-alt mr-2"></i>Upload Files
+                                    </button>
+                                    <button type="button" id="clearBtn" class="px-6 py-2 border rounded-lg text-gray-700 hover:bg-gray-50 transition" onclick="clearFilePreview()">
+                                        <i class="fas fa-redo mr-2"></i>Clear Selection
+                                    </button>
+                                </div>
+                            </form>
                         </div>
                     </div>
 
@@ -1154,7 +1274,7 @@ if (isset($_GET['deleteDoc'])) {
                             <h3 class="text-lg font-semibold text-gray-800 mb-4">Required Documents</h3>
                             <div class="space-y-3">
                                 <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
-                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1" checked>
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
                                     <div>
                                         <p class="font-medium text-gray-800 text-sm">Good Moral Form</p>
                                         <p class="text-xs text-gray-500">From previous school</p>
@@ -1162,7 +1282,7 @@ if (isset($_GET['deleteDoc'])) {
                                 </label>
 
                                 <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
-                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1" checked>
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
                                     <div>
                                         <p class="font-medium text-gray-800 text-sm">Form 137</p>
                                         <p class="text-xs text-gray-500">School report card</p>
@@ -1170,7 +1290,7 @@ if (isset($_GET['deleteDoc'])) {
                                 </label>
 
                                 <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
-                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
                                     <div>
                                         <p class="font-medium text-gray-800 text-sm">Birth Certificate</p>
                                         <p class="text-xs text-gray-500">Official birth certificate</p>
@@ -1178,7 +1298,7 @@ if (isset($_GET['deleteDoc'])) {
                                 </label>
 
                                 <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
-                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
                                     <div>
                                         <p class="font-medium text-gray-800 text-sm">Certificate of Completion</p>
                                         <p class="text-xs text-gray-500">From Grade 6</p>
@@ -1186,7 +1306,7 @@ if (isset($_GET['deleteDoc'])) {
                                 </label>
 
                                 <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
-                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
                                     <div>
                                         <p class="font-medium text-gray-800 text-sm">ESC Certificate G11 & G12</p>
                                         <p class="text-xs text-gray-500">Educational Service Contract</p>
@@ -1194,7 +1314,7 @@ if (isset($_GET['deleteDoc'])) {
                                 </label>
 
                                 <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
-                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
                                     <div>
                                         <p class="font-medium text-gray-800 text-sm">Report Card G11 & G12</p>
                                         <p class="text-xs text-gray-500">Senior high school grades</p>
@@ -1202,7 +1322,7 @@ if (isset($_GET['deleteDoc'])) {
                                 </label>
 
                                 <label class="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 transition cursor-pointer">
-                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1">
+                                    <input type="checkbox" class="w-4 h-4 text-green-600 mt-1 doc-checker">
                                     <div>
                                         <p class="font-medium text-gray-800 text-sm">2x2 ID Picture</p>
                                         <p class="text-xs text-gray-500">Recent passport-style photo</p>
@@ -1214,11 +1334,70 @@ if (isset($_GET['deleteDoc'])) {
                             <div class="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                                 <p class="text-sm text-blue-800 mb-2"><i class="fas fa-info-circle mr-2"></i>Completion Status</p>
                                 <div class="w-full bg-blue-200 rounded-full h-2 mt-2">
-                                    <div class="bg-green-600 h-2 rounded-full" style="width: 28%"></div>
+                                    <div id="completionBar" class="bg-green-600 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
                                 </div>
-                                <p class="text-xs text-blue-600 mt-2 font-semibold">2 of 7 documents submitted</p>
+                                <p class="text-xs text-blue-600 mt-2 font-semibold"><span id="completionText">0</span> of 7 documents submitted</p>
                             </div>
                         </div>
+
+            <section id="roles" class="page fade-in hidden">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-2xl font-semibold text-gray-800">Manage Roles</h2>
+                    <p class="text-sm text-gray-500">Configure user roles and permissions</p>
+                    <button class="bg-green-600 text-white px-4 py-2 rounded-lg">Add New Role</button>
+                </div>
+                <div class="bg-white rounded-lg shadow p-6">
+                    <table class="min-w-full mt-4">
+                        <thead>
+                            <tr>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500">Role Name</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500">Permissions</th>
+                                <th class="px-4 py-2 text-right text-xs font-medium text-gray-500">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                                    <!-- Dummy Data Rows -->
+                            <tr>
+                                <td class="px-4 py-2">Administrator</td>
+                                <td class="px-4 py-2">Manage Users, Settings, Analytics</td>
+                                <td class="px-4 py-2 text-right">
+                                    <button class="text-indigo-600">Edit</button>
+                                    <button class="text-red-600">Delete</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="px-4 py-2">Moderator</td>
+                                <td class="px-4 py-2">Manage Content</td>
+                                <td class="px-4 py-2 text-right">
+                                    <button class="text-indigo-600">Edit</button>
+                                    <button class="text-red-600">Delete</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="px-4 py-2">User</td>
+                                <td class="px-4 py-2">View Content</td>
+                                <td class="px-4 py-2 text-right">
+                                    <button class="text-indigo-600">Edit</button>
+                                    <button class="text-red-600">Delete</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="px-4 py-2">Guest</td>
+                                <td class="px-4 py-2">View Public Content</td>
+                                <td class="px-4 py-2 text-right">
+                                    <button class="text-indigo-600">Edit</button>
+                                    <button class="text-red-600">Delete</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+
+
+
+
                     </div>
                 </div>
             </section>
@@ -1298,8 +1477,8 @@ if (isset($_GET['deleteDoc'])) {
         });
     </script>
 
+    <!-- ===== FILE UPLOAD FUNCTIONS ===== -->
     <script>
-        // ===== FILE UPLOAD FUNCTIONS =====
         let selectedFilesData = [];
 
         function handleFileSelect(event) {
@@ -1422,65 +1601,63 @@ if (isset($_GET['deleteDoc'])) {
             setTimeout(() => notification.remove(), 3000);
         }
 
-        // Load uploaded files on page load
-        document.addEventListener('DOMContentLoaded', function() {
-            loadUploadedFiles();
-        });
-
         // Document upload form submission
-        document.getElementById('documentUploadForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('documentUploadForm');
+            if (form) {
+                form.addEventListener('submit', async function(e) {
+                    e.preventDefault();
 
-            const files = document.getElementById('fileInput').files;
-            if (files.length === 0) {
-                showNotification('Please select files to upload', 'error');
-                return;
-            }
-
-            const formData = new FormData();
-            for (let i = 0; i < files.length; i++) {
-                formData.append('documents[]', files[i]);
-            }
-
-            try {
-                // Show progress
-                document.getElementById('uploadProgress').classList.remove('hidden');
-                document.getElementById('selectedFilesPreview').classList.add('hidden');
-
-                // Simulate progress
-                let progress = 0;
-                const progressInterval = setInterval(() => {
-                    progress += Math.random() * 30;
-                    if (progress > 90) progress = 90;
-                    updateProgress(progress);
-                }, 300);
-
-                const response = await fetch('upload.php', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                clearInterval(progressInterval);
-                updateProgress(100);
-
-                const data = await response.json();
-
-                setTimeout(() => {
-                    document.getElementById('uploadProgress').classList.add('hidden');
-                    
-                    if (data.success) {
-                        showNotification(data.message, 'success');
-                        clearFilePreview();
-                        loadUploadedFiles();
-                    } else {
-                        showNotification(data.message || 'Upload failed', 'error');
+                    const files = document.getElementById('fileInput').files;
+                    if (files.length === 0) {
+                        showNotification('Please select files to upload', 'error');
+                        return;
                     }
-                }, 500);
 
-            } catch (error) {
-                console.error('Upload error:', error);
-                showNotification('Upload failed: ' + error.message, 'error');
-                document.getElementById('uploadProgress').classList.add('hidden');
+                    const formData = new FormData();
+                    for (let i = 0; i < files.length; i++) {
+                        formData.append('documents[]', files[i]);
+                    }
+
+                    try {
+                        document.getElementById('uploadProgress').classList.remove('hidden');
+                        document.getElementById('selectedFilesPreview').classList.add('hidden');
+
+                        let progress = 0;
+                        const progressInterval = setInterval(() => {
+                            progress += Math.random() * 30;
+                            if (progress > 90) progress = 90;
+                            updateProgress(progress);
+                        }, 300);
+
+                        const response = await fetch('upload.php', {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        clearInterval(progressInterval);
+                        updateProgress(100);
+
+                        const data = await response.json();
+
+                        setTimeout(() => {
+                            document.getElementById('uploadProgress').classList.add('hidden');
+                            
+                            if (data.success) {
+                                showNotification(data.message, 'success');
+                                clearFilePreview();
+                                loadUploadedFiles();
+                            } else {
+                                showNotification(data.message || 'Upload failed', 'error');
+                            }
+                        }, 500);
+
+                    } catch (error) {
+                        console.error('Upload error:', error);
+                        showNotification('Upload failed: ' + error.message, 'error');
+                        document.getElementById('uploadProgress').classList.add('hidden');
+                    }
+                });
             }
         });
 
@@ -1503,7 +1680,7 @@ if (isset($_GET['deleteDoc'])) {
                     if (data.files.length > 0) {
                         container.classList.remove('hidden');
 
-                        data.files.forEach((file, index) => {
+                        data.files.forEach((file) => {
                             const ext = file.name.split('.').pop().toLowerCase();
                             const size = (file.size / 1024 / 1024).toFixed(2);
 
@@ -1521,7 +1698,7 @@ if (isset($_GET['deleteDoc'])) {
                             const fileItem = document.createElement('div');
                             fileItem.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-lg animate-fadeIn';
                             fileItem.innerHTML = `
-                                <div class="flex items-center gap-3">
+                                <div class="flex items-center gap-3 flex-1">
                                     <i class="fas ${icon} ${color} text-lg"></i>
                                     <div>
                                         <p class="text-sm font-medium text-gray-800">${file.name}</p>
@@ -1530,7 +1707,10 @@ if (isset($_GET['deleteDoc'])) {
                                 </div>
                                 <div class="flex items-center gap-2">
                                     <span class="px-2 py-1 bg-green-100 text-green-800 text-xs font-semibold rounded">✓ Uploaded</span>
-                                    <button onclick="deleteUploadedFile(${index})" class="text-gray-400 hover:text-red-600 transition">
+                                    <a href="upload.php?action=downloadFile&fileId=${file.id}" title="Download" class="text-gray-400 hover:text-blue-600 transition">
+                                        <i class="fas fa-download"></i>
+                                    </a>
+                                    <button onclick="deleteUploadedFile(${file.id})" class="text-gray-400 hover:text-red-600 transition">
                                         <i class="fas fa-trash"></i>
                                     </button>
                                 </div>
@@ -1557,18 +1737,19 @@ if (isset($_GET['deleteDoc'])) {
             document.getElementById('completionText').textContent = count;
         }
 
-        async function deleteUploadedFile(index) {
+        async function deleteUploadedFile(fileId) {
             if (!confirm('Are you sure you want to delete this file?')) {
                 return;
             }
 
             try {
+                const formData = new FormData();
+                formData.append('action', 'deleteFile');
+                formData.append('fileId', fileId);
+
                 const response = await fetch('upload.php', {
-                    method: 'DELETE',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ docIndex: index })
+                    method: 'POST',
+                    body: formData
                 });
 
                 const data = await response.json();
@@ -1577,7 +1758,7 @@ if (isset($_GET['deleteDoc'])) {
                     showNotification('File deleted successfully', 'success');
                     loadUploadedFiles();
                 } else {
-                    showNotification('Error deleting file', 'error');
+                    showNotification(data.message || 'Error deleting file', 'error');
                 }
             } catch (error) {
                 console.error('Delete error:', error);
@@ -1585,6 +1766,7 @@ if (isset($_GET['deleteDoc'])) {
             }
         }
     </script>
+
 </body>
 
 </html>
