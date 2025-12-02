@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Dec 01, 2025 at 12:02 PM
+-- Generation Time: Dec 02, 2025 at 01:27 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -29,24 +29,47 @@ SET time_zone = "+00:00";
 
 CREATE TABLE `profile_images` (
   `id` int(11) NOT NULL,
-  `image_path` varchar(255) NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `image_path` varchar(255) DEFAULT NULL,
   `upload_date` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dumping data for table `profile_images`
 --
 
-INSERT INTO `profile_images` (`id`, `image_path`, `upload_date`) VALUES
-(26, 'uploads/692d47f913ae0_Screenshot 2025-12-01 134852.png', '2025-12-01 07:47:05'),
-(27, 'uploads/692d48746df39_Screenshot 2025-12-01 134852.png', '2025-12-01 07:49:08'),
-(28, 'uploads/692d48b451103_Screenshot 2025-12-01 134852.png', '2025-12-01 07:50:12'),
-(29, 'uploads/692d48db77a30_Screenshot 2025-12-01 134852.png', '2025-12-01 07:50:51'),
-(30, 'uploads/692d491e4c0b0_Screenshot 2025-12-01 134852.png', '2025-12-01 07:51:58'),
-(31, 'uploads/692d495dab060_download (2).jpg', '2025-12-01 07:53:01'),
-(32, 'uploads/692d49aa47cf3_download (2).jpg', '2025-12-01 07:54:18'),
-(33, 'uploads/692d4a919a71d_download (2).jpg', '2025-12-01 07:58:09'),
-(34, 'uploads/692d4b4a58517_download (2).jpg', '2025-12-01 08:01:14');
+INSERT INTO `profile_images` (`id`, `user_id`, `image_path`, `upload_date`) VALUES
+(12, 5, 'uploads/profile_5_1764597207.jpg', '2025-12-01 06:53:27');
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `roles`
+--
+
+CREATE TABLE `roles` (
+  `id` int(11) NOT NULL,
+  `role_name` varchar(50) NOT NULL,
+  `permissions` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dumping data for table `roles`
+--
+
+INSERT INTO `roles` (`id`, `role_name`, `permissions`, `created_at`) VALUES
+(1, 'Administrator', 'Manage Users, Settings, Analytics', '2025-12-01 13:40:41'),
+(2, 'Moderator', 'Manage Content', '2025-12-01 13:40:41'),
+(3, 'User', 'View Content', '2025-12-01 13:40:41'),
+(4, 'Guest', 'View Public Content', '2025-12-01 13:40:41'),
+(5, 'Administrator', 'Manage Users, Settings, Analytics', '2025-12-01 13:42:06'),
+(6, 'Moderator', 'Manage Content', '2025-12-01 13:42:06'),
+(7, 'User', 'View Content', '2025-12-01 13:42:06'),
+(8, 'Guest', 'View Public Content', '2025-12-01 13:42:06'),
+(9, 'Admin', '[\"view_dashboard\", \"manage_users\", \"edit_roles\"]', '2025-12-01 13:50:04'),
+(10, 'Editor', '[\"view_dashboard\", \"edit_content\"]', '2025-12-01 13:50:04'),
+(11, 'Viewer', '[\"view_dashboard\"]', '2025-12-01 13:50:04');
 
 -- --------------------------------------------------------
 
@@ -56,16 +79,41 @@ INSERT INTO `profile_images` (`id`, `image_path`, `upload_date`) VALUES
 
 CREATE TABLE `users` (
   `id` int(11) NOT NULL,
+  `username` varchar(255) NOT NULL,
   `email` varchar(255) NOT NULL,
-  `password` varchar(255) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+  `password` varchar(255) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dumping data for table `users`
 --
 
-INSERT INTO `users` (`id`, `email`, `password`) VALUES
-(1, '12@admin.com', '$2y$10$OqJLOrEuuOv4XBmKFj7jV.kk9TD2llqfyDgJ2Rp5fPocWWF/trJAO');
+INSERT INTO `users` (`id`, `username`, `email`, `password`, `created_at`) VALUES
+(5, 'Admin2', 'bukidnon1@admin.com', '$2y$10$kasRaBxhi2xZ4rvH0f9XAuo.u7wzdkkGM8KLNxf882bYx9Vf6rKZS', '2025-12-01 12:58:18');
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `user_documents`
+--
+
+CREATE TABLE `user_documents` (
+  `id` int(11) NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `document_name` varchar(255) NOT NULL,
+  `document_path` varchar(255) NOT NULL,
+  `file_size` int(11) NOT NULL,
+  `upload_date` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Dumping data for table `user_documents`
+--
+
+INSERT INTO `user_documents` (`id`, `user_id`, `document_name`, `document_path`, `file_size`, `upload_date`) VALUES
+(1, 5, 'robotics.docx', 'uploads/documents/doc_5_1764594055_03aa01e9.docx', 2193163, '2025-12-01 13:00:55'),
+(2, 5, 'TABAÑAG_Semifinal-Final_LaboratoryActivity1.docx', 'uploads/documents/doc_5_1764594063_fdb91dec.docx', 199392, '2025-12-01 13:01:03');
 
 --
 -- Indexes for dumped tables
@@ -75,6 +123,13 @@ INSERT INTO `users` (`id`, `email`, `password`) VALUES
 -- Indexes for table `profile_images`
 --
 ALTER TABLE `profile_images`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `user_id` (`user_id`);
+
+--
+-- Indexes for table `roles`
+--
+ALTER TABLE `roles`
   ADD PRIMARY KEY (`id`);
 
 --
@@ -82,7 +137,15 @@ ALTER TABLE `profile_images`
 --
 ALTER TABLE `users`
   ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `username` (`username`),
   ADD UNIQUE KEY `email` (`email`);
+
+--
+-- Indexes for table `user_documents`
+--
+ALTER TABLE `user_documents`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_user_id` (`user_id`);
 
 --
 -- AUTO_INCREMENT for dumped tables
@@ -92,13 +155,41 @@ ALTER TABLE `users`
 -- AUTO_INCREMENT for table `profile_images`
 --
 ALTER TABLE `profile_images`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=35;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
+
+--
+-- AUTO_INCREMENT for table `roles`
+--
+ALTER TABLE `roles`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=12;
 
 --
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+
+--
+-- AUTO_INCREMENT for table `user_documents`
+--
+ALTER TABLE `user_documents`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+
+--
+-- Constraints for dumped tables
+--
+
+--
+-- Constraints for table `profile_images`
+--
+ALTER TABLE `profile_images`
+  ADD CONSTRAINT `profile_images_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `user_documents`
+--
+ALTER TABLE `user_documents`
+  ADD CONSTRAINT `user_documents_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
